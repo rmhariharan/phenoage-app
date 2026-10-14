@@ -4,7 +4,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Blood Age Explorer", page_icon="🩸", layout="wide")
+st.set_page_config(page_title="Biological Age Explorer", page_icon="🩸", layout="wide")
 
 # ------------------------------------------------------------------
 # 1. THE MARKERS

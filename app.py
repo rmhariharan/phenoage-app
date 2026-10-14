@@ -65,7 +65,7 @@ def phenoage(age, values):
 # ------------------------------------------------------------------
 # 3. THE INTERFACE: header
 # ------------------------------------------------------------------
-st.title("Blood Age Explorer")
+st.title("Biological Age Explorer")
 st.markdown(
     "Estimate your biological age from nine routine blood tests, "
     "using the **PhenoAge** formula developed by Morgan Levine and colleagues."

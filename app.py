@@ -14,7 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-st.set_page_config(page_title="Blood Age Explorer", page_icon="🩸", layout="wide")
+st.set_page_config(page_title="Biological Age Explorer", page_icon="🩸", layout="wide")
 
 # ------------------------------------------------------------------
 # 1. THE MARKERS
@@ -230,7 +230,7 @@ def build_pdf(age, bio, gap, message, marker_rows, chart_rows):
     h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontSize=12.5, spaceBefore=10, spaceAfter=4)
     story = []
 
-    story.append(Paragraph("Blood Age Explorer: PhenoAge report", ss["Title"]))
+    story.append(Paragraph("Biological Age Explorer: PhenoAge report", ss["Title"]))
     story.append(Paragraph(f"Generated {date.today():%B %d, %Y} &nbsp;|&nbsp; "
                            "Estimate based on Levine's Phenotypic Age formula", small))
     story.append(Spacer(1, 10))

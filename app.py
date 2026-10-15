@@ -7,7 +7,7 @@ import pdfplumber
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Blood Age Explorer", page_icon="🩸", layout="wide")
+st.set_page_config(page_title="Biological Age Explorer", page_icon="🩸", layout="wide")
 
 # ------------------------------------------------------------------
 # 1. THE MARKERS
@@ -204,7 +204,7 @@ if "age" not in st.session_state:
 # ------------------------------------------------------------------
 # 4. THE INTERFACE: header
 # ------------------------------------------------------------------
-st.title("Blood Age Explorer")
+st.title("Biological Age Explorer")
 st.markdown(
     "Estimate your biological age from nine routine blood tests, "
     "using the **PhenoAge** formula developed by Morgan Levine and colleagues."

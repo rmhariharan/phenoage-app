@@ -337,7 +337,7 @@ def build_pdf(age, bio, gap, message, marker_rows, chart_rows):
 # ------------------------------------------------------------------
 # 5. THE INTERFACE: header
 # ------------------------------------------------------------------
-st.title("Blood Age Explorer")
+st.title("Biological Age Explorer")
 st.markdown(
     "Estimate your biological age from nine routine blood tests, "
     "using the **PhenoAge** formula developed by Morgan Levine and colleagues."

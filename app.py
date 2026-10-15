@@ -4,7 +4,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Biological Age Explorer", page_icon="🩸", layout="wide")
+st.set_page_config(page_title="Blood Age Explorer", page_icon="🩸", layout="wide")
 
 # ------------------------------------------------------------------
 # 1. THE MARKERS
@@ -65,7 +65,7 @@ def phenoage(age, values):
 # ------------------------------------------------------------------
 # 3. THE INTERFACE: header
 # ------------------------------------------------------------------
-st.title("Biological Age Explorer")
+st.title("Blood Age Explorer")
 st.markdown(
     "Estimate your biological age from nine routine blood tests, "
     "using the **PhenoAge** formula developed by Morgan Levine and colleagues."
@@ -109,43 +109,72 @@ else:
     st.info("Your blood profile is close to what is typical for your age in the reference population.")
 
 # ------------------------------------------------------------------
-# 6. WHICH MARKERS ARE PUSHING IT UP OR DOWN?
-# For each marker, reset just that one to its reference value and see
-# how much the estimate changes. That change is the marker's effect.
+# 6. WHAT'S MOVING YOUR ESTIMATE
+# A neat property of the PhenoAge formula: once you work through the
+# algebra, the final number is a straight-line function of the
+# weighted sum (CRP on a log scale). So each marker's effect, in years,
+# is simply  coefficient × (your value − reference value) / 0.09165.
+# These effects add up exactly. One extra "baseline" bar holds the gap
+# a person with every marker at its reference value would have at your age.
 # ------------------------------------------------------------------
 st.subheader("What's moving your estimate")
 
-rows = []
-for m in MARKERS:
-    swapped = dict(values)
-    swapped[m["key"]] = reference[m["key"]]
-    effect = bio - phenoage(age, swapped)
-    rows.append({
-        "Marker": m["name"],
-        "Years": round(effect, 2),
-        "Direction": "Adds years" if effect > 0 else "Takes years off",
-    })
-df = pd.DataFrame(rows)
+def scaled(key, x):
+    return math.log(x) if key == "crp" else x
 
-chart = (
+YEARS_PER_UNIT = 1 / 0.09165
+
+baseline = phenoage(age, reference) - age
+rows = [{
+    "Factor": "Baseline (reference profile at your age)",
+    "Years": baseline,
+    "Type": "Baseline",
+}]
+for m in MARKERS:
+    k = m["key"]
+    effect = m["coef"] * (scaled(k, values[k]) - scaled(k, reference[k])) * YEARS_PER_UNIT
+    rows.append({
+        "Factor": m["name"],
+        "Years": effect,
+        "Type": "Adds years" if effect > 0 else "Takes years off",
+    })
+
+df = pd.DataFrame(rows)
+df["Size"] = df["Years"].abs()
+df = df.sort_values("Size", ascending=False)
+df["Label"] = df["Years"].map(lambda v: f"{v:+.1f}")
+order = df["Factor"].tolist()
+
+bars = (
     alt.Chart(df)
     .mark_bar()
     .encode(
-        x=alt.X("Years:Q", title="Years added (+) or taken off (−) versus reference"),
-        y=alt.Y("Marker:N", sort=alt.EncodingSortField(field="Years", order="descending"), title=None),
+        x=alt.X("Years:Q", title="Years added (+) or taken off (−)"),
+        y=alt.Y("Factor:N", sort=order, title=None),
         color=alt.Color(
-            "Direction:N",
-            scale=alt.Scale(domain=["Adds years", "Takes years off"], range=["#c0392b", "#1f8a70"]),
+            "Type:N",
+            scale=alt.Scale(
+                domain=["Adds years", "Takes years off", "Baseline"],
+                range=["#c0392b", "#1f8a70", "#9aa0a6"],
+            ),
             legend=alt.Legend(title=None, orient="top"),
         ),
-        tooltip=["Marker", "Years"],
+        tooltip=["Factor", alt.Tooltip("Years:Q", format="+.2f")],
     )
-    .properties(height=320)
 )
-st.altair_chart(chart, use_container_width=True)
+labels = (
+    alt.Chart(df)
+    .mark_text(align="left", dx=4)
+    .encode(x=alt.X("Years:Q"), y=alt.Y("Factor:N", sort=order), text="Label:N")
+)
+zero = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(color="#666").encode(x="x:Q")
+
+st.altair_chart((bars + labels + zero).properties(height=360), use_container_width=True)
 st.caption(
-    "Each bar compares your value with a typical healthy reference value (the slider's starting point). "
-    "The bars are approximate and won't add up exactly to the total, because the formula is non-linear."
+    f"These bars add up exactly to your difference of {gap:+.1f} years. "
+    "Each marker bar compares your value with a typical healthy reference value (the slider's starting point). "
+    "The grey baseline is the difference a person with all reference values would have at your age. "
+    "It shifts with age because the formula counts each calendar year as slightly less than one year."
 )
 
 # ------------------------------------------------------------------

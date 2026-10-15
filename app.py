@@ -1,13 +1,20 @@
 import io
 import math
 import re
+from datetime import date
 
 import altair as alt
 import pdfplumber
 import pandas as pd
 import streamlit as st
+from reportlab.graphics.shapes import Drawing, Line, Rect, String
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-st.set_page_config(page_title="Biological Age Explorer", page_icon="🩸", layout="wide")
+st.set_page_config(page_title="Blood Age Explorer", page_icon="🩸", layout="wide")
 
 # ------------------------------------------------------------------
 # 1. THE MARKERS
@@ -202,219 +209,85 @@ if "age" not in st.session_state:
 
 
 # ------------------------------------------------------------------
-# 4. THE INTERFACE: header
+# 4. THE PDF REPORT: a one-click summary people can download and keep
+# Built with ReportLab. Nothing is stored; the PDF is made fresh in memory.
 # ------------------------------------------------------------------
-st.title("Biological Age Explorer")
-st.markdown(
-    "Estimate your biological age from nine routine blood tests, "
-    "using the **PhenoAge** formula developed by Morgan Levine and colleagues."
-)
-
-# ------------------------------------------------------------------
-# 5. THE UPLOADER: fill the sliders from a lab report
-# ------------------------------------------------------------------
-uploaded = st.file_uploader(
-    "Drop a lab report here to fill in the sliders (text-based PDF)",
-    type="pdf",
-    help="Read on the server with pattern matching. The file is not saved and is not sent anywhere else.",
-)
-if uploaded is not None and st.session_state.get("last_file") != uploaded.file_id:
-    st.session_state["last_file"] = uploaded.file_id
-    try:
-        found, report_age, n_chars = read_report(uploaded.getvalue())
-    except Exception:
-        found, report_age, n_chars = {}, None, -1
-    st.session_state["extraction"] = dict(found=found, age=report_age, n_chars=n_chars)
-    model_values = dict(REFERENCE_MODEL)
-    model_values.update({k: v["model"] for k, v in found.items()})
-    set_sliders(model_values)
-    if report_age:
-        st.session_state["age"] = report_age
-
-extraction = st.session_state.get("extraction")
-if extraction:
-    found = extraction["found"]
-    if extraction["n_chars"] == -1:
-        st.error("Couldn't open that PDF. Please enter your values with the sliders.")
-    elif extraction["n_chars"] < 50:
-        st.error("This PDF has no readable text, so it's probably a scan or photo. "
-                 "This reader only handles text-based PDFs. Please enter your values with the sliders.")
-    else:
-        missing = [mk["name"] for mk in MARKERS if mk["key"] not in found]
-        if missing:
-            st.warning(f"Found {len(found)} of 9 markers. Not found, so left at reference values: "
-                       + ", ".join(missing) + ". Please set these by hand.")
-        else:
-            st.success("Found all 9 markers.")
-        with st.expander("Check what was read from your report", expanded=True):
-            st.caption("Pattern matching can misread a report. Compare these with your PDF and fix any slider that's off.")
-            table = []
-            for mk in MARKERS:
-                f = found.get(mk["key"])
-                table.append({
-                    "Marker": mk["name"],
-                    "Value read": f"{f['raw']:g}" if f else "—",
-                    "Unit": (f["unit"] or mk["si"][0]) if f else "",
-                    "Note": f["note"] if f else "not found",
-                    "From this line": f["line"][:80] if f else "",
-                })
-            st.dataframe(pd.DataFrame(table), hide_index=True, use_container_width=True)
-            if extraction["age"]:
-                st.caption(f"Age read from report: {extraction['age']}")
-            else:
-                st.caption("No age found on the report. Set your age in the sidebar.")
+def pdf_unit(unit):
+    """Built-in PDF fonts lack superscript digits, so use markup instead."""
+    unit = unit.replace("µ", "u").replace("μ", "u")  # the micro sign is missing from the built-in font
+    return unit.replace("³", "<super>3</super>").replace("⁹", "<super>9</super>")
 
 
-# ------------------------------------------------------------------
-# 6. THE INTERFACE: sidebar inputs
-# ------------------------------------------------------------------
-st.sidebar.header("Your numbers")
-units = st.sidebar.radio("Lab units", ["US", "SI"], horizontal=True)
-system = "us" if units == "US" else "si"
+def build_pdf(age, bio, gap, message, marker_rows, chart_rows):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.8 * inch, rightMargin=0.8 * inch,
+                            topMargin=0.7 * inch, bottomMargin=0.7 * inch,
+                            title="PhenoAge report", author="Blood Age Explorer")
+    ss = getSampleStyleSheet()
+    body = ParagraphStyle("body", parent=ss["BodyText"], fontSize=9.5, leading=13)
+    small = ParagraphStyle("small", parent=body, fontSize=8, leading=10.5, textColor=colors.HexColor("#555555"))
+    cell = ParagraphStyle("cell", parent=body, fontSize=9, leading=11)
+    h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontSize=12.5, spaceBefore=10, spaceAfter=4)
+    story = []
 
-age = st.sidebar.slider("Chronological age (years)", 18, 100, key="age")
+    story.append(Paragraph("Blood Age Explorer: PhenoAge report", ss["Title"]))
+    story.append(Paragraph(f"Generated {date.today():%B %d, %Y} &nbsp;|&nbsp; "
+                           "Estimate based on Levine's Phenotypic Age formula", small))
+    story.append(Spacer(1, 10))
 
-st.sidebar.caption("Sliders start at typical healthy values. Upload a report or move them to match your labs.")
-st.sidebar.button("Reset to reference values", on_click=reset_all)
-
-values = {}      # in the formula's units
-reference = {}   # reference values, in the formula's units
-for m in MARKERS:
-    unit, lo, hi, ref, step, factor = m[system]
-    shown = st.sidebar.slider(f"{m['name']} ({unit})", lo, hi, step=step, key=f"{m['key']}_{system}")
-    values[m["key"]] = shown * factor
-    reference[m["key"]] = ref * factor
-
-# ------------------------------------------------------------------
-# 7. THE RESULT
-# ------------------------------------------------------------------
-bio = phenoage(age, values)
-gap = bio - age
-
-c1, c2, c3 = st.columns(3)
-c1.metric("PhenoAge estimate", f"{bio:.1f} years")
-c2.metric("Chronological age", f"{age} years")
-c3.metric("Difference", f"{gap:+.1f} years", delta=f"{gap:+.1f}", delta_color="inverse")
-
-if gap <= -2:
-    st.success("Your blood profile resembles that of people younger than you in the reference population.")
-elif gap >= 2:
-    st.warning("Your blood profile resembles that of people older than you in the reference population.")
-else:
-    st.info("Your blood profile is close to what is typical for your age in the reference population.")
-
-# ------------------------------------------------------------------
-# 8. WHAT'S MOVING YOUR ESTIMATE
-# A neat property of the PhenoAge formula: once you work through the
-# algebra, the final number is a straight-line function of the
-# weighted sum (CRP on a log scale). So each marker's effect, in years,
-# is simply  coefficient × (your value − reference value) / 0.09165.
-# These effects add up exactly. One extra "baseline" bar holds the gap
-# a person with every marker at its reference value would have at your age.
-# ------------------------------------------------------------------
-st.subheader("What's moving your estimate")
-
-def scaled(key, x):
-    return math.log(x) if key == "crp" else x
-
-YEARS_PER_UNIT = 1 / 0.09165
-
-baseline = phenoage(age, reference) - age
-rows = [{
-    "Factor": "Baseline (reference profile at your age)",
-    "Years": baseline,
-    "Type": "Baseline",
-}]
-for m in MARKERS:
-    k = m["key"]
-    effect = m["coef"] * (scaled(k, values[k]) - scaled(k, reference[k])) * YEARS_PER_UNIT
-    rows.append({
-        "Factor": m["name"],
-        "Years": effect,
-        "Type": "Adds years" if effect > 0 else "Takes years off",
-    })
-
-df = pd.DataFrame(rows)
-df["Size"] = df["Years"].abs()
-df = df.sort_values("Size", ascending=False)
-df["Label"] = df["Years"].map(lambda v: f"{v:+.1f}")
-order = df["Factor"].tolist()
-
-bars = (
-    alt.Chart(df)
-    .mark_bar()
-    .encode(
-        x=alt.X("Years:Q", title="Years added (+) or taken off (−)"),
-        y=alt.Y("Factor:N", sort=order, title=None),
-        color=alt.Color(
-            "Type:N",
-            scale=alt.Scale(
-                domain=["Adds years", "Takes years off", "Baseline"],
-                range=["#c0392b", "#1f8a70", "#9aa0a6"],
-            ),
-            legend=alt.Legend(title=None, orient="top"),
-        ),
-        tooltip=["Factor", alt.Tooltip("Years:Q", format="+.2f")],
+    # --- headline numbers
+    headline = Table(
+        [["PhenoAge estimate", "Chronological age", "Difference"],
+         [f"{bio:.1f} years", f"{age} years", f"{gap:+.1f} years"]],
+        colWidths=[2.2 * inch] * 3,
     )
-)
-labels = (
-    alt.Chart(df)
-    .mark_text(align="left", dx=4)
-    .encode(x=alt.X("Years:Q"), y=alt.Y("Factor:N", sort=order), text="Label:N")
-)
-zero = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(color="#666").encode(x="x:Q")
+    headline.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, 0), "Helvetica", 9),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#555555")),
+        ("FONT", (0, 1), (-1, 1), "Helvetica-Bold", 16),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f6f7f8")),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(headline)
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(message, body))
 
-st.altair_chart((bars + labels + zero).properties(height=360), use_container_width=True)
-st.caption(
-    f"These bars add up exactly to your difference of {gap:+.1f} years. "
-    "Each marker bar compares your value with a typical healthy reference value (the slider's starting point). "
-    "The grey baseline is the difference a person with all reference values would have at your age. "
-    "It shifts with age because the formula counts each calendar year as slightly less than one year."
-)
+    # --- marker table
+    story.append(Paragraph("Your markers", h2))
+    data = [[Paragraph("<b>Marker</b>", cell), Paragraph("<b>Your value</b>", cell),
+             Paragraph("<b>Reference</b>", cell), Paragraph("<b>Effect (years)</b>", cell)]]
+    for name, value, ref, unit, effect in marker_rows:
+        u = pdf_unit(unit)
+        data.append([Paragraph(name, cell), Paragraph(f"{value:g} {u}", cell),
+                     Paragraph(f"{ref:g} {u}", cell), Paragraph(f"{effect:+.1f}", cell)])
+    t = Table(data, colWidths=[2.4 * inch, 1.5 * inch, 1.5 * inch, 1.2 * inch], repeatRows=1)
+    t.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.HexColor("#333333")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f7f8")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(t)
+    story.append(Paragraph("Reference values are typical healthy values used as the comparison point, not clinical targets.", small))
 
-# ------------------------------------------------------------------
-# 9. ABOUT, LIMITS, AND REFERENCES
-# ------------------------------------------------------------------
-with st.expander("What is PhenoAge?", expanded=False):
-    st.markdown(
-        """
-PhenoAge (also called Phenotypic Age) combines your chronological age with nine common blood markers
-into a single number, measured in years.
-
-Levine and colleagues built it from **NHANES III**, a large US health survey (1988–1994). Starting from
-42 lab measures, they kept the combination that best predicted death over the following years. The result
-is the age at which an average person in that population would carry the same estimated mortality risk.
-
-In an independent sample (**NHANES IV**, 1999–2010), PhenoAge tracked mortality and chronic disease
-across diverse groups, and people with more diseases tended to have an older PhenoAge.
-
-**How to read your number:** a PhenoAge above your actual age means your blood profile looks like that
-of older people in the reference population. Below means younger.
-        """
-    )
-
-with st.expander("Limits worth knowing", expanded=False):
-    st.markdown(
-        """
-- **It's an estimate, not a diagnosis.** It describes population-level risk, not what will happen to you.
-- **One blood draw is noisy.** A cold, a hard workout, or poor sleep can raise CRP or white cells for days.
-- **It was built on US survey data.** Calibration may differ in other populations.
-- **The "Difference" here is a simple subtraction.** Research papers usually report *PhenoAge acceleration*,
-  which adjusts for age statistically.
-- **This is not medical advice.** Talk with a clinician about any lab result that concerns you.
-        """
-    )
-
-st.subheader("References")
-st.markdown(
-    """
-1. Levine ME, Lu AT, Quach A, et al. An epigenetic biomarker of aging for lifespan and healthspan.
-   *Aging (Albany NY)*. 2018;10(4):573–591. [doi:10.18632/aging.101414](https://doi.org/10.18632/aging.101414)
-2. Liu Z, Kuo PL, Horvath S, Crimmins E, Ferrucci L, Levine M. A new aging measure captures morbidity and
-   mortality risk across diverse subpopulations from NHANES IV: A cohort study. *PLOS Medicine*.
-   2018;15(12):e1002718. [doi:10.1371/journal.pmed.1002718](https://doi.org/10.1371/journal.pmed.1002718)
-    """
-)
-
-st.divider()
-st.caption("For education only. Not a medical device and not medical advice. This app does not save your values or files.")
+    # --- bar chart
+    story.append(Paragraph("What's moving your estimate", h2))
+    width, row_h, label_w = 6.6 * inch, 16, 2.6 * inch
+    height = row_h * len(chart_rows) + 20
+    d = Drawing(width, height)
+    biggest = max(1.0, max(abs(v) for _, v, _ in chart_rows))
+    plot_w = width - label_w - 40
+    zero_x = label_w + plot_w / 2
+    scale = (plot_w / 2) / biggest
+    palette = {"Adds years": "#c0392b", "Takes years off": "#1f8a70", "Baseline": "#9aa0a6"}
+    for i, (name, years, kind) in enumerate(chart_rows):
+        y = height - 14 - (i + 1) * row_h + 4
+        d.add(String(label_w - 6, y + 3, name, fontName="Helvetica", fontSize=8, textAnchor="end"))
+        x0 = zero_x if years >= 0 else zero_x + years * scale
+        d.add(Rect(x0, y, abs(years) * scale, row_h - 5,
+                   fillColor=colors.HexColor(palette[kind]), strokeColor=None))
+        tx = zero_x + years * scale + (4 if years >= 0 else -4)
+        d.add(String(tx, y + 3, f"{years:+.1f}", fontName="Helvetica", fontSize=7.5,
+                     textAnchor="start" if years >= 0 else "end"))
+    d.add(Line(zero_x, 6, zero_x, height - 10, strokeColor=colors.HexColor("#666666"),

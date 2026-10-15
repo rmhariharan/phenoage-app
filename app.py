@@ -290,4 +290,4 @@ def build_pdf(age, bio, gap, message, marker_rows, chart_rows):
         tx = zero_x + years * scale + (4 if years >= 0 else -4)
         d.add(String(tx, y + 3, f"{years:+.1f}", fontName="Helvetica", fontSize=7.5,
                      textAnchor="start" if years >= 0 else "end"))
-    d.add(Line(zero_x, 6, zero_x, height - 10, strokeColor=colors.HexColor("#666666"),
+      d.add(Line(zero_x, 6, zero_x, height - 10, strokeColor=colors.HexColor("#666666"), strokeWidth=0.6))
